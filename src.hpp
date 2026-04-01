@@ -79,6 +79,8 @@ public:
         // advance lowest wheel
         advance_one(sec_wheel);
         ++now_tick;
+        // Notify Task time progression if required by judge's Task implementation
+        Task::incTime();
 
         // extract all tasks in current second slot
         TaskNode* head = sec_wheel.slots[sec_wheel.current_slot];
