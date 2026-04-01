@@ -162,8 +162,13 @@ public:
             due.push_back(cur->task);
             unsigned long long period = static_cast<unsigned long long>(cur->task->getPeriod());
             if (period > 0) {
-                // reschedule periodically from now
-                cur->next_fire = now_tick + period;
+                // Reschedule without drift: base on previous next_fire
+                cur->next_fire += period;
+                if (cur->next_fire <= now_tick) {
+                    unsigned long long behind = now_tick - cur->next_fire;
+                    unsigned long long steps = behind / period + 1ULL;
+                    cur->next_fire += steps * period;
+                }
                 schedule_node(cur, /*is_reschedule=*/true);
             } else {
                 // one-shot: mark unscheduled; free node
@@ -229,6 +234,7 @@ private:
     void schedule_node(TaskNode* n, bool /*is_reschedule*/) {
         // Compute delta from current time
         unsigned long long delta = (n->next_fire > now_tick) ? (n->next_fire - now_tick) : 0ULL;
+        if (delta == 0ULL) delta = 1ULL; // fire on next tick at earliest
 
         if (delta < sec_wheel.size) {
             n->rem_secs = 0;
