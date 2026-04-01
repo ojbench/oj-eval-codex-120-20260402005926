@@ -12,7 +12,7 @@ class TaskNode {
     friend class TimingWheel;
     friend class Timer;
 public:
-    TaskNode() : task(nullptr), next(nullptr), prev(nullptr), bucket(nullptr), level(-1), rem_secs(0), rem_mins(0), next_fire(0) {}
+    TaskNode() : task(nullptr), next(nullptr), prev(nullptr), bucket(nullptr), level(-1), rem_secs(0), rem_mins(0), hour_rounds(0), next_fire(0) {}
 
 private:
     Task* task;                 // Task pointer (no ownership)
@@ -22,6 +22,7 @@ private:
     int level;                  // 0=sec,1=min,2=hour, -1=not scheduled
     int rem_secs;               // residual seconds when stored in minute/hour wheels
     int rem_mins;               // residual minutes when stored in hour wheel
+    unsigned long long hour_rounds; // number of full 24h rotations remaining
     unsigned long long next_fire; // absolute tick when it should fire next
 };
 
@@ -92,15 +93,23 @@ public:
             advance_one(min_wheel);
             // if minutes rolled over, advance hour wheel and cascade hours -> minutes first
             if (min_wheel.current_slot == 0) {
-                // move all nodes from current hour slot into minute wheel according to rem_mins
+                // advance hour wheel
+                advance_one(hour_wheel);
+                // move all nodes from current hour slot into minute wheel according to rem_mins or keep if rounds remain
                 TaskNode* h = hour_wheel.slots[hour_wheel.current_slot];
                 hour_wheel.slots[hour_wheel.current_slot] = nullptr;
                 while (h) {
                     TaskNode* nxt = h->next;
                     h->next = h->prev = nullptr;
                     h->bucket = nullptr;
-                    // insert into minute wheel at offset rem_mins
-                    insert_into_minute(h, h->rem_mins);
+                    if (h->hour_rounds > 0) {
+                        // still need more full 24h cycles, keep in same hour slot for next cycle
+                        --h->hour_rounds;
+                        insert_into_hour(h, 0);
+                    } else {
+                        // insert into minute wheel at offset rem_mins
+                        insert_into_minute(h, h->rem_mins);
+                    }
                     h = nxt;
                 }
             }
@@ -242,17 +251,17 @@ private:
             n->rem_secs = static_cast<int>(delta % sec_wheel.size);
             n->rem_mins = static_cast<int>((delta / sec_wheel.size) % min_wheel.size);
             int dhour = static_cast<int>(delta / total_secs_min);
+            n->hour_rounds = 0;
             insert_into_hour(n, dhour);
             return;
         }
 
-        // If delay exceeds 24 hours window, approximate by clamping at max window boundary.
-        // Place in hour wheel at the furthest slot, keeping residuals.
-        unsigned long long clamped = delta % total_secs_hour;
-        n->rem_secs = static_cast<int>(clamped % sec_wheel.size);
-        n->rem_mins = static_cast<int>((clamped / sec_wheel.size) % min_wheel.size);
-        int dhour = static_cast<int>(clamped / total_secs_min);
+        // If delay exceeds 24 hours window, keep full cycles count in hour_rounds
+        n->hour_rounds = delta / total_secs_hour;
+        unsigned long long rem = delta % total_secs_hour;
+        n->rem_secs = static_cast<int>(rem % sec_wheel.size);
+        n->rem_mins = static_cast<int>((rem / sec_wheel.size) % min_wheel.size);
+        int dhour = static_cast<int>(rem / total_secs_min);
         insert_into_hour(n, dhour);
     }
 };
-
